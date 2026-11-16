@@ -1,0 +1,24 @@
+{
+  "name": "inbox-watcher",
+  "version": "1.0.0",
+  "description": "Reads your inbox on a schedule and tells you in Google Chat when a person is waiting on you. Everything else waits for one daily digest.",
+  "type": "module",
+  "private": true,
+  "license": "MIT",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "test": "node --test \"test/*.test.mjs\"",
+    "demo": "node scripts/demo.mjs"
+  },
+  "author": "Akshay Bhimani (https://github.com/akshay-hmmbiz)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/akshay-hmmbiz/inbox-watcher.git"
+  },
+  "bugs": {
+    "url": "https://github.com/akshay-hmmbiz/inbox-watcher/issues"
+  },
+  "homepage": "https://github.com/akshay-hmmbiz/inbox-watcher#readme"
+}
