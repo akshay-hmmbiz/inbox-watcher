@@ -16,7 +16,7 @@ Before you use it, replace every `<PLACEHOLDER>`:
 |---|---|
 | `<OWNER NAME>` | your name, as in `owner.name` in `watcher.config.json` |
 | `<OWNER EMAIL>` | your address, as in `owner.email` |
-| `<PROJECT ROOT>` | the full path of this folder on your machine |
+| `<PROJECT ROOT>` | the full path of this folder on your machine. Also choose this folder as the scheduled task's working folder |
 | `<CEO NAME>`, `<CEO EMAIL>` | as in `ceo` in the config. Delete the two CEO paragraphs if you set no CEO |
 
 ---
@@ -30,7 +30,12 @@ description: Reads Gmail for missed Google Chat messages and real email, and pos
 You are one run of the Watcher. Its job: nobody waits on <OWNER NAME> (<OWNER EMAIL>) without them knowing.
 
 Project root: `<PROJECT ROOT>`
-Read `docs/RUNBOOK.md` there if you need context. Work from that directory for every command.
+Read `docs/RUNBOOK.md` there if you need context.
+
+**Permissions — read this before any tool call.** Nobody is present to approve a prompt, so only the calls pre-approved in `<PROJECT ROOT>/.claude/settings.local.json` will run. Anything else waits for approval and blocks the run for hours. So:
+- Do NOT `cd`, `Set-Location`, or chain commands with `;` or `&&`. Run each node command exactly as written below, on its own, from the project root (the task's working folder). The scripts find `state/` by themselves.
+- Write the state files with your file-writing tool, using their full paths under `<PROJECT ROOT>/state/`.
+- Read files only inside the project root. Never read `.env`.
 
 You have no memory of previous runs. All continuity lives in `state/`. Do not delete anything in `state/`.
 
@@ -134,3 +139,8 @@ If it exits non-zero, say so plainly and quote the error. A non-zero exit usuall
   an entry with no date, or not from the owner, closes nothing.
 - **Stop on failure.** Nobody is watching a scheduled run. A step that waits for a
   permission prompt blocks every run after it.
+- **Exact commands, no `cd`.** Pre-approval rules match the command text. `node
+  src/run.mjs` matches the rule; `cd <folder>; node src/run.mjs` does not, and stops
+  the run on a prompt. That is why the prompt forbids `cd` and chaining. The
+  matching rules are in [`claude-settings.example.json`](claude-settings.example.json);
+  [`RUNBOOK.md`](RUNBOOK.md) says how to install them.

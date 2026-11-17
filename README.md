@@ -214,6 +214,12 @@ scheduled task every 2 hours. It follows the prompt in
 [`docs/scheduled-task-prompt.md`](docs/scheduled-task-prompt.md). The agent also judges
 the few messages the fixed rules cannot place.
 
+A scheduled run has nobody to click "Allow", so pre-approve its tools: copy
+[`docs/claude-settings.example.json`](docs/claude-settings.example.json) to
+`.claude/settings.local.json`, put in your Gmail connector's id, and make this folder the
+task's working folder. Without that, runs stall on a permission prompt.
+[`docs/RUNBOOK.md`](docs/RUNBOOK.md) has the steps.
+
 You do not have to use an agent. Anything that can write `state/inbox.json` in the shape
 shown in [`examples/README.md`](examples/README.md) will do: a Gmail API script, an IMAP
 script, an export. Without an agent you also write `verdicts.json` yourself, or leave it
@@ -377,7 +383,7 @@ src/state.mjs       atomic writes and the run lock
 src/chat.mjs        posts to the webhook
 examples/           invented input for the demo
 fixtures/           invented mail and pages for the tests
-docs/               the runbook and the agent prompt
+docs/               the runbook, the agent prompt and the permissions template
 ```
 
 ## Related tools

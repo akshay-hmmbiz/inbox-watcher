@@ -11,13 +11,37 @@ A plain-language guide to living with the thing that watches your inbox. It is w
 The Watcher is run by a scheduled task: an AI agent with a Gmail connector follows
 `docs/scheduled-task-prompt.md` every 2 hours, for example from 08:00 to 22:00.
 
-**Run it by hand once first.** The first run asks you to approve the tools it needs
-(Gmail and the shell). Approve them then, so later runs never stop half-way on a
-permission prompt. Until you do, a run can simply sit there, and a sitting run blocks
-every run behind it.
+**Pre-approve its tools, or it will stall.** Nobody is there to click "Allow" during a
+scheduled run. Any tool call that is not pre-approved waits on a permission prompt, the
+run sits there for hours, and a sitting run blocks every run behind it. In the scheduler's
+run list it may even show as "succeeded" while having written nothing. This was the
+single most common failure in real use. Set it up once:
 
-If your scheduler only works while an app is open (the Claude desktop app is like this),
-the Watcher only runs while that app is open.
+1. **Make this folder the scheduled task's working folder.** The commands in the prompt
+   are relative to it (`node src/triage.mjs`), and the rules below match that exact text.
+2. **Copy [`claude-settings.example.json`](claude-settings.example.json) to
+   `.claude/settings.local.json`** in this folder (create the `.claude` folder).
+3. **Replace `<GMAIL SERVER ID>`** with your Gmail connector's id. It is the middle part
+   of the connector's tool names, e.g. `mcp__<id>__search_threads`. If you are unsure,
+   run the task by hand once and choose "always allow" on the Gmail prompts; the app
+   writes the right names for you.
+4. **Run it by hand once** and check it goes from start to the final summary line with
+   no prompt.
+
+The rules allow only: the three Gmail read tools, reading this folder, writing inside
+`state/`, and exactly the two node commands. Reading `.env` is denied. Nothing that
+sends, labels or deletes mail is allowed.
+
+### Other reasons a run does not happen
+
+- **The app is closed or the computer is asleep.** If your scheduler only works while an
+  app is open (the Claude desktop app is like this), the Watcher only runs while that app
+  is open and the machine is awake. Missed slots are not made up. Days with the laptop
+  shut are simply days with no Watcher.
+- **Usage limits.** A scheduled run uses the same plan as your own Claude work. On a
+  heavy day a run can fail with "You've hit your 5-hour limit". Nothing is lost: the next
+  run picks the mail up again, because Step 1 reads a full day. If it happens often, run
+  less often (every 3–4 hours) or raise your plan.
 
 ---
 

@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__<GMAIL SERVER ID>__search_threads",
+      "mcp__<GMAIL SERVER ID>__get_message",
+      "mcp__<GMAIL SERVER ID>__get_thread",
+      "Read(/**)",
+      "Edit(/state/**)",
+      "Write(/state/**)",
+      "Bash(node src/triage.mjs)",
+      "Bash(node src/run.mjs)",
+      "PowerShell(node src/triage.mjs)",
+      "PowerShell(node src/run.mjs)"
+    ],
+    "deny": [
+      "Read(/.env)",
+      "Read(/.env.*)"
+    ]
+  }
+}
