@@ -2,13 +2,13 @@
 
 The Node code in this repo never talks to Gmail. An AI agent does that part. On a
 schedule (every 2 hours works well), an agent that has a Gmail connector and a shell
-follows the prompt below. It reads the mail, writes three JSON files into `state/`, and
+follows the prompt below. It reads the mail, writes four JSON files into `state/`, and
 runs two commands.
 
 This was written for Claude with a Gmail connector, run as a scheduled task in the Claude
 desktop app. Any agent that can search Gmail, read a message body and run a shell command
-can follow it. The tool names in Step 1 (`search_threads`, `get_message`, `get_thread`)
-are the ones that connector uses. Change them to match yours.
+can follow it. The tool names in Steps 1 and 3b (`search_threads`, `get_message`,
+`get_thread`) are the ones that connector uses. Change them to match yours.
 
 Before you use it, replace every `<PLACEHOLDER>`:
 
@@ -17,7 +17,7 @@ Before you use it, replace every `<PLACEHOLDER>`:
 | `<OWNER NAME>` | your name, as in `owner.name` in `watcher.config.json` |
 | `<OWNER EMAIL>` | your address, as in `owner.email` |
 | `<PROJECT ROOT>` | the full path of this folder on your machine. Also choose this folder as the scheduled task's working folder |
-| `<CEO NAME>`, `<CEO EMAIL>` | as in `ceo` in the config. Delete the two CEO paragraphs if you set no CEO |
+| `<CEO NAME>`, `<CEO EMAIL>` | as in `ceo` in the config. If you set no CEO, delete the "**The CEO.**" paragraph and the one sentence about the CEO in the `importance` paragraph |
 
 ---
 
@@ -55,8 +55,9 @@ Using the Gmail connector:
 
 Write `state/inbox.json`: a JSON array, one object per message:
 
-    { "id", "threadId", "from", "to": [], "cc": [], "subject", "date", "plaintextBody" or "snippet", "link" }
+    { "id", "threadId", "from", "to": [], "cc": [], "subject", "date", "plaintextBody" or "snippet", "link", "labelIds": [] }
 
+- `labelIds` — the message's Gmail labels exactly as `search_threads` returned them (for example `["INBOX", "UNREAD", "IMPORTANT"]`). Copy them as given; never add or drop `UNREAD`. A message the owner has already opened has no `UNREAD` and is not raised. If a message comes back without labels, leave the field out: the code then treats it as unread. Never invent labels, and do not call `get_thread` just to fill them in.
 - `from` — pass the display name when Gmail gives one, as `Name <addr@example.com>`. The alert reads better with a real name, and the code handles either form.
 - `date` — the message's real date, ISO 8601. Required: ages and the catch-up rule depend on it.
 - `link` — the message's view URL when you have it.
@@ -75,7 +76,23 @@ Write `state/sent.json`: a JSON array of `{ "threadId", "date", "from" }` — **
 
     node src/triage.mjs
 
-It writes `state/classified.json` and `state/unknowns.json`. It exits 0 when there is nothing to do.
+It writes `state/classified.json`, `state/unknowns.json` and `state/openThreads.json`, and empties `state/readState.json`. It exits 0 when there is nothing to do.
+
+## Step 3b — has the owner read the open items?
+
+An open item closes once the owner has opened it in Gmail. Read `state/openThreads.json`: a JSON array of Gmail thread ids, one for each thread behind an item that is still open.
+
+For each id, call `get_thread` with `messageFormat: METADATA_ONLY`. This only reads labels: it does not mark anything read, so it is allowed on every thread, the CEO's included.
+
+Write `state/readState.json`: a JSON object keyed by thread id. Each value lists **every message `get_thread` returned for that thread, none left out** — the first one, later replies, the owner's own sent messages — each with its `id` and its `labelIds` exactly as returned. Message ids usually differ from the thread id:
+
+    { "18f3a2b4c5d6e7f8": [
+        { "id": "18f3a2b4c5d6e7f8", "labelIds": ["IMPORTANT", "CATEGORY_PERSONAL", "INBOX"] },
+        { "id": "18f3a9c0d1e2f3a4", "labelIds": ["UNREAD", "IMPORTANT", "CATEGORY_PERSONAL", "INBOX"] } ] }
+
+- Copy `labelIds` as given: a list of plain strings. Never add, drop or infer `UNREAD`: its absence is what closes the item. Leaving a message out does not close anything; the code checks every message it knows of.
+- If `get_thread` fails for a thread, leave that thread out. A missing thread keeps its item open, which is the safe side.
+- If `openThreads.json` is `[]`, write `{}`.
 
 ## Step 4 — judge only the unknowns
 
@@ -102,7 +119,7 @@ Only `tier` is required. `waitingFor` should be concrete — "your confirmation 
 
 **`importance` (Tier 1 only, optional)** is one of `high`, `medium`, `low`. Leave it out for an ordinary blocked person: the code uses High. Use `medium` when someone is waiting but nothing stops today; `low` almost never. **Never set it for the CEO** (<CEO NAME>, <CEO EMAIL>): the code marks the CEO Top most by itself and a verdict cannot change that.
 
-**The CEO.** Do not open, mark, label, reply to or otherwise touch any message of theirs. Reading the email copy through the Gmail connector (the search, and the plain-text read of a `chat-noreply` notification) is the only access allowed, because it shows the sender nothing. Never use any Chat or browser tool on that conversation.
+**The CEO.** Do not open, mark, label, reply to or otherwise touch any message of theirs. Reading the email copy through the Gmail connector (the search, the plain-text read of a `chat-noreply` notification, and `get_thread` with `METADATA_ONLY` in Step 3b) is the only access allowed, because it shows the sender nothing. Never use any Chat or browser tool on that conversation.
 
 If `state/unknowns.json` is empty, write `{}` and move on.
 
@@ -110,7 +127,7 @@ If `state/unknowns.json` is empty, write `{}` and move on.
 
     node src/run.mjs
 
-It closes what the owner has answered, updates the ledger, posts what is due, and prints a one-line summary. Report that line.
+It closes what the owner has answered or read, updates the ledger, posts what is due, and prints a one-line summary. Report that line.
 
 If it exits non-zero, say so plainly and quote the error. A non-zero exit usually means a post failed; the summary names the status. Nothing is lost when that happens — items stay open for the next run.
 
@@ -134,9 +151,13 @@ If it exits non-zero, say so plainly and quote the error. A non-zero exit usuall
   flood the space.
 - **"When in doubt, Tier 2" is repeated on purpose.** One false alarm costs more trust
   than one late item.
-- **`sent.json` gets the most words** because it is the one input that can close an item.
-  A wrong entry there hides a person who is still waiting. The code also defends itself:
-  an entry with no date, or not from the owner, closes nothing.
+- **`sent.json` gets the most words** because it can close an item. A wrong entry there
+  hides a person who is still waiting. The code also defends itself: an entry with no
+  date, or not from the owner, closes nothing.
+- **`readState.json` is the other input that closes items**, so the prompt asks for every
+  message verbatim and never an inferred label. The code treats anything missing, empty or
+  oddly shaped as unread, cross-checks every message id it has seen for the item, and
+  ignores the file from an earlier run because triage empties it first.
 - **Stop on failure.** Nobody is watching a scheduled run. A step that waits for a
   permission prompt blocks every run after it.
 - **Exact commands, no `cd`.** Pre-approval rules match the command text. `node

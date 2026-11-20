@@ -50,6 +50,21 @@ test('the committed example config is valid and is what the test suite runs on',
   assert.deepEqual(activeSettings(), s);
 });
 
+test('a public webmail owner does not make every sender at that webmail a colleague', () => {
+  // Found in review: owner pat.lee@gmail.com with no internalDomain made a promo from
+  // another @gmail.com address a "colleague" and alerted it as High.
+  for (const email of ['pat.lee@gmail.com', 'pat@GoogleMail.com', 'pat@outlook.com', 'pat@hotmail.com', 'pat@yahoo.com', 'pat@icloud.com']) {
+    const s = validateSettings({ owner: { name: 'Pat Lee', email } });
+    assert.equal(s.internalDomain, null, email);
+    const r = classify({ from: 'deals.shop.promo@gmail.com', to: [s.owner.email], subject: 'Sale' }, s);
+    assert.notEqual(r.tier, 1, email);
+  }
+  // Setting it explicitly still works, and a company owner still defaults to their own domain.
+  const set = validateSettings({ owner: { name: 'Pat Lee', email: 'pat.lee@gmail.com' }, internalDomain: 'acme.test' });
+  assert.equal(set.internalDomain, '@acme.test');
+  assert.deepEqual(classify({ from: 'jo@acme.test', to: ['pat.lee@gmail.com'], subject: 's' }, set), { tier: 1, reason: 'colleague-direct' });
+});
+
 test('a minimal config needs only the owner; everything else has a default', () => {
   const s = validateSettings(MINIMAL);
   assert.deepEqual(s.owner, { name: 'Sam Rivera', email: 'sam@acme.test' });

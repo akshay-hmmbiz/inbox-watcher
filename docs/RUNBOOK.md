@@ -36,8 +36,9 @@ sends, labels or deletes mail is allowed.
 
 - **The app is closed or the computer is asleep.** If your scheduler only works while an
   app is open (the Claude desktop app is like this), the Watcher only runs while that app
-  is open and the machine is awake. Missed slots are not made up. Days with the laptop
-  shut are simply days with no Watcher.
+  is open and the machine is awake. A run that fell due while the app was closed runs
+  once when the app next opens; the slots in between are not repeated. Days with the
+  laptop shut are simply days with no Watcher.
 - **Usage limits.** A scheduled run uses the same plan as your own Claude work. On a
   heavy day a run can fail with "You've hit your 5-hour limit". Nothing is lost: the next
   run picks the mail up again, because Step 1 reads a full day. If it happens often, run
@@ -91,9 +92,31 @@ A Tier 1 item stays open until it is dealt with. It is raised again at 2 hours a
 along in the daily digest until you close it. A single ping that arrives while you are in
 a meeting is the exact failure this exists to prevent.
 
-An **email** item closes by itself once the Watcher sees your reply in your sent mail.
-A **Chat** item cannot: the webhook can only send, so the Watcher never sees your Chat
-reply. Close those yourself (below).
+An item closes by itself in either of two ways:
+
+- **You open it in Gmail.** Click the link in the alert, or open the email straight from
+  your inbox. On the next run the item is gone. This works for Chat items too: opening the
+  "messaged you on Google Chat" email counts. A Chat conversation that sent several
+  notification emails closes once you have opened all of them.
+- **You reply by email** from your own address (email items only).
+
+Reading counts as handled because much of what reaches you is acted on somewhere else: an
+approval given in another system, an access request granted in Drive. If only a reply
+closed an item, those would stay "still open" in every digest long after you had dealt
+with them.
+
+**Opened it but still need to act?** Mark it **unread** again in Gmail. The Watcher keeps
+it open and keeps reminding you until you open it again.
+
+A message you had already opened before the Watcher first saw it is not alerted at all. If
+you mark it unread again while it is still inside the inbox window (the last day), the
+next run raises it.
+
+**Careful with "Select all → Mark as read".** It closes every open item at once, the
+CEO's included. So does any mail app that marks mail read when it previews it.
+
+Anything you cannot open in Gmail (a Chat item with no email behind it) still needs
+closing by hand (below).
 
 ### The daily site check
 
@@ -206,9 +229,29 @@ If an internal address is being treated as a person when it is really a bot, add
 
 ### Try a change without posting
 
+macOS or Linux:
+
 ```bash
 WATCHER_STATE_DIR=/tmp/watcher-try node src/triage.mjs
 WATCHER_STATE_DIR=/tmp/watcher-try node src/run.mjs --dry-run
+```
+
+Windows PowerShell:
+
+```powershell
+$env:WATCHER_STATE_DIR = "$env:TEMP\watcher-try"
+node src/triage.mjs
+node src/run.mjs --dry-run
+Remove-Item Env:WATCHER_STATE_DIR
+```
+
+Windows Command Prompt (`cmd`):
+
+```bat
+set WATCHER_STATE_DIR=%TEMP%\watcher-try
+node src/triage.mjs
+node src/run.mjs --dry-run
+set WATCHER_STATE_DIR=
 ```
 
 `--dry-run` (or `DRY_RUN=1`) prints each Chat message instead of posting it, and needs no
@@ -262,6 +305,8 @@ Everything it knows lives in `state/`.
 |---|---|
 | `inbox.json`, `sent.json`, `verdicts.json` | this run's input, written by the scheduled agent |
 | `classified.json`, `unknowns.json` | what `triage` made of the inbox |
+| `openThreads.json` | the Gmail threads behind each open item, written by `triage` for the agent to check |
+| `readState.json` | this run's read/unread labels for those threads, written by the agent; emptied by `triage` every run |
 | `ledger.json` | **the open items**, and which reminders have gone out |
 | `seen.json` | message ids already handled, so nothing is announced twice |
 | `digest.json` | **Tier 2 items waiting** for the daily digest |

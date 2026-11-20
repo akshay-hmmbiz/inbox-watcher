@@ -50,7 +50,10 @@ export function classify(msg, settings = activeSettings()) {
 
   // 2. A real colleague (internal, not automated) who addresses the owner directly.
   //    Internal lead-form addresses are excluded here as well.
+  //    No internal domain (a public webmail owner who set none) means nobody is a colleague by
+  //    domain; endsWith('') would otherwise make everyone one.
   const isPerson =
+    typeof settings.internalDomain === 'string' && settings.internalDomain !== '' &&
     from.endsWith(settings.internalDomain) &&
     !settings.automatedInternalSenders.includes(from) &&
     !NO_REPLY_LOCAL.test(from) &&

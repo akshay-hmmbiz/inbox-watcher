@@ -3,11 +3,11 @@
 // Original source: https://github.com/akshay-hmmbiz/inbox-watcher
 // `node src/run.mjs` — step 2 of a scheduled run, and the part that decides WHEN anything
 // is said. It reads what triage and the model left in state/, closes what the owner has
-// already answered, updates the ledger, posts what is due, and prints one line.
+// already answered or read, updates the ledger, posts what is due, and prints one line.
 //
 // Files in state/ (all plain JSON unless noted):
-//   written by the scheduled task   inbox.json  sent.json  verdicts.json
-//   written by triage               classified.json  unknowns.json
+//   written by the scheduled task   inbox.json  sent.json  verdicts.json  readState.json
+//   written by triage               classified.json  unknowns.json  openThreads.json
 //   owned by this module            ledger.json  seen.json  digest.json  notices.json
 //                                   lastRun  lastDigest (ISO timestamps, plain text)  run.lock
 //
@@ -32,7 +32,7 @@ import { postToChat } from './chat.mjs';
 import { conversationKey } from './chatmail.mjs';
 import { checkSites } from './sites.mjs';
 import { formatCatchUp, formatDigest, formatNag, formatTier1, hiddenCount, importanceRank } from './format.mjs';
-import { closeItem, dueForNag, loadLedger, markNagged, openItem, saveLedger } from './ledger.mjs';
+import { closeItem, dueForNag, loadLedger, markNagged, openItem, saveLedger, threadsOf } from './ledger.mjs';
 import { triage } from './triage.mjs';
 import { acquireLock, defaultStateDir, quarantine, readJson, writeJsonAtomic, writeTextAtomic } from './state.mjs';
 import { activeSettings } from './settings.mjs';
@@ -188,6 +188,9 @@ async function runLocked(opts, now, stateDir) {
   };
   const sent = opts.sent ?? soft('sent.json', [], Array.isArray);
   const verdicts = opts.verdicts ?? soft('verdicts.json', {}, isObject);
+  // Gmail read state of every open item's threads, as the agent found it this run:
+  // { "<threadId>": [ { "id", "labelIds": [...] }, ... ] }. It can only close items, so it is soft too.
+  const readState = opts.readState ?? soft('readState.json', {}, isObject);
 
   // ---- state ------------------------------------------------------------------
   const st = { notices: [], forceCatchUp: false, replaced: false };
@@ -358,11 +361,39 @@ async function runLocked(opts, now, stateDir) {
     }
   }
 
+  //    The owner has read it. Opening an item in Gmail, from the alert's link or straight from
+  //    the inbox, is the owner handling it: an approval is often given in another system and an
+  //    access request in Drive, so no reply ever comes, and without this those items would stay
+  //    open for weeks. Any item, Chat ones included, closes once EVERY Gmail thread it came from
+  //    is read. Only positive evidence counts: a thread the agent did not check, an empty or
+  //    malformed one, or a message without labels is unread. The owner keeps an item open by
+  //    marking it unread again.
+  //    Two cross-checks keep an incomplete readState from closing anything: every message id
+  //    the item has absorbed must appear, read, in the threads checked; and a message in THIS
+  //    run's inbox that still says UNREAD vetoes its thread outright.
+  let closedRead = 0;
+  const readIds = new Set();
+  for (const messages of Object.values(readState)) {
+    if (Array.isArray(messages)) for (const m of messages) if (messageIsRead(m)) readIds.add(String(m.id));
+  }
+  const unreadThreads = new Set(classified.filter((e) => messageIsUnread(e) && e.threadId != null).map((e) => String(e.threadId)));
+  for (const item of Object.values(st.ledger.items)) {
+    const threads = threadsOf(item);
+    const ids = Array.isArray(item.messages) ? item.messages : [];
+    if (threads.length > 0
+      && threads.every((t) => threadIsRead(readState[t]) && !unreadThreads.has(t))
+      && ids.every((id) => readIds.has(id))) {
+      st.ledger = closeItem(st.ledger, item.key);
+      closedRead += 1;
+    }
+  }
+
   // 3. Sort the new mail: Tier 1 into the ledger, everything else held for the digest.
   const groups = new Map();
   let unjudged = 0;
   let poisoned = 0;
   let ignored = 0;
+  let alreadyRead = 0;
   const intake = (e) => {
     if (!isObject(e) || e.id === undefined || e.id === null) return;
     const id = String(e.id);
@@ -378,8 +409,19 @@ async function runLocked(opts, now, stateDir) {
     }
     if (tier === 1) {
       const c = candidate(e, verdict, now, settings.ceo);
+      if (c.thread && hasReplied(c.thread, c.date)) {
+        st.seen.ids[id] = nowIso;
+        return; // he has already answered it
+      }
+      // The owner has already opened it in Gmail: that counts as handled, so it is not raised.
+      // Only a plain label list without UNREAD counts; no labels means unknown, and it is raised.
+      // It is deliberately NOT marked seen: if it is marked unread again while still in the
+      // inbox window, the next run raises it. That is the escape hatch the RUNBOOK offers.
+      if (messageIsRead(e)) {
+        alreadyRead += 1;
+        return;
+      }
       st.seen.ids[id] = nowIso;
-      if (c.thread && hasReplied(c.thread, c.date)) return; // he has already answered it
       if (!groups.has(c.key)) groups.set(c.key, []);
       groups.get(c.key).push(c);
     } else {
@@ -412,10 +454,17 @@ async function runLocked(opts, now, stateDir) {
     if (st.ledger.items[key]) {
       const next = structuredClone(st.ledger);
       const open = next.items[key];
+      // Taken before the link is replaced: an old item may have its thread only in the link.
+      const threadsBefore = threadsOf(open);
       if (newest.summary) open.summary = newest.summary;
       if (newest.link) open.link = newest.link;
       if (newest.person && newest.person !== 'Someone') open.person = newest.person;
       if (newest.waitingFor) open.waitingFor = newest.waitingFor;
+      // Every thread it arrives in is tracked, so reading the first notification of a
+      // conversation does not close it while a later one is still unread.
+      const threads = [...new Set([...threadsBefore, ...group.map((g) => g.gmailThread).filter(Boolean)])];
+      if (threads.length) open.threads = threads;
+      open.messages = [...new Set([...(Array.isArray(open.messages) ? open.messages : []), ...group.map((g) => g.id)])];
       // Importance only ever rises on an open item: the CEO joining a thread makes it Top most.
       const best = group.reduce((b, g) => (importanceRank(g) < importanceRank(b) ? g : b));
       if (importanceRank(best) < importanceRank(open)) open.importance = best.importance;
@@ -426,6 +475,8 @@ async function runLocked(opts, now, stateDir) {
       const opened = openItem(st.ledger, {
         key, person: newest.person, summary: newest.summary, link: newest.link, openedAt: group[0].date, waitingFor: newest.waitingFor,
         importance: group.reduce((b, g) => (importanceRank(g) < importanceRank(b) ? g : b)).importance,
+        threads: group.map((g) => g.gmailThread).filter(Boolean),
+        messages: group.map((g) => g.id),
       });
       opened.items[key].unalerted = true;
       st.ledger = opened;
@@ -513,10 +564,33 @@ async function runLocked(opts, now, stateDir) {
   // then keeps growing, so the first good run summarises instead of bursting.
   if (failed === 0) writeTextAtomic(file('lastRun'), nowIso);
 
-  return { posted, failed, failureStatus: firstFailure, counts, unjudged, ignoredSent, unattributedSent, poisoned, ignored, owner: settings.owner.email };
+  return { posted, failed, failureStatus: firstFailure, counts, unjudged, ignoredSent, unattributedSent, poisoned, ignored, closedRead, alreadyRead, owner: settings.owner.email };
 }
 
 // --- pieces ----------------------------------------------------------------------
+
+const UNREAD = 'UNREAD';
+
+// A message that carries a real list of Gmail labels without UNREAD. Anything else is unread.
+// Strict on purpose: an empty list, a non-string entry (a label object copied whole) or
+// "unread" in any case is not proof of reading, since each would close or skip an item
+// nobody has seen.
+function messageIsRead(m) {
+  return isObject(m) && Array.isArray(m.labelIds) && m.labelIds.length > 0
+    && m.labelIds.every((l) => typeof l === 'string' && l.trim().toUpperCase() !== UNREAD);
+}
+
+// The message carries a usable label list that says UNREAD.
+function messageIsUnread(m) {
+  return isObject(m) && Array.isArray(m.labelIds)
+    && m.labelIds.some((l) => typeof l === 'string' && l.trim().toUpperCase() === UNREAD);
+}
+
+// A thread's entry in readState.json is read only when it lists at least one message and every
+// message it lists is read. Missing, empty, or any malformed message: unread.
+function threadIsRead(messages) {
+  return Array.isArray(messages) && messages.length > 0 && messages.every(messageIsRead);
+}
 
 const notice = (title, body) => `*Watcher notice: ${title}*\n${body}`;
 const keptLine = (kept) => (kept ? ` It was kept aside as ${kept} in the state folder.` : ' It could not be kept aside.');
@@ -592,6 +666,8 @@ function candidate(e, verdict, now, ceo) {
     id: String(e.id),
     key,
     thread,
+    // The Gmail thread the message sits in, Chat notifications included: what reading closes.
+    gmailThread: nonEmpty(e.threadId === undefined || e.threadId === null ? undefined : String(e.threadId)),
     person: nonEmpty(verdict?.person) ?? nonEmpty(person) ?? 'Someone',
     summary: nonEmpty(verdict?.summary) ?? summary,
     link,
@@ -664,6 +740,8 @@ export function summarize(result) {
   if (result.failed) line += `; ${plural(result.failed, 'post')} failed${result.failureStatus ? ` (${result.failureStatus})` : ''} and will be retried`;
   if (result.poisoned) line += `; ${plural(result.poisoned, 'message')} could not be processed and ${result.poisoned === 1 ? 'was' : 'were'} skipped`;
   if (result.ignored) line += `; ${plural(result.ignored, 'message')} ignored as not important`;
+  if (result.closedRead) line += `; closed ${result.closedRead} ${result.closedRead === 1 ? 'item' : 'items'} you had read`;
+  if (result.alreadyRead) line += `; ${plural(result.alreadyRead, 'message')} you had already read ${result.alreadyRead === 1 ? 'was' : 'were'} not raised`;
   if (result.unjudged) line += `; ${plural(result.unjudged, 'message')} could not be judged this run`;
   if (result.ignoredSent) line += `; ${result.ignoredSent} sent ${result.ignoredSent === 1 ? 'entry' : 'entries'} without a usable date ${result.ignoredSent === 1 ? 'was' : 'were'} ignored`;
   if (result.unattributedSent) line += `; ${result.unattributedSent} sent ${result.unattributedSent === 1 ? 'entry' : 'entries'} not from ${result.owner ?? 'the owner'} ${result.unattributedSent === 1 ? 'was' : 'were'} ignored`;

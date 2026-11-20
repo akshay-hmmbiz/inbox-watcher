@@ -4,6 +4,8 @@ Inbox Watcher reads your inbox on a schedule and tells you in Google Chat when a
 
 ![tests](https://github.com/akshay-hmmbiz/inbox-watcher/actions/workflows/test.yml/badge.svg)
 
+**New here?** Follow [SETUP.md](SETUP.md): about 10 minutes from download to the first alert.
+
 ## Why I built it
 
 A colleague asks a yes-or-no question in chat, and waits half a day because it was buried under newsletters. I wanted that to stop.
@@ -42,11 +44,14 @@ npm test
 npm run demo
 ```
 
-`npm test` runs 303 tests. They need no network and no setup.
+`npm test` runs 323 tests. They need no network and no setup.
 
 `npm run demo` runs the real code on nine invented messages in `examples/`. It prints the
 Chat messages in your terminal. It posts nothing. It needs no webhook, no `.env` and no
 config file.
+
+Not used to the terminal? [SETUP.md](SETUP.md) walks through these steps one at a time,
+including how to download the code without git and how to open a terminal in the folder.
 
 ## What the output looks like
 
@@ -150,7 +155,9 @@ Chat app or admin rights.
 
 ## Real setup
 
-There are three parts.
+There are three parts. [SETUP.md](SETUP.md) has the same setup as numbered steps, with
+Windows commands and a check after each step. This section explains each part in more
+depth.
 
 ### 1. A Chat webhook
 
@@ -178,7 +185,7 @@ machine. Only `owner` is required.
 |---|---|---|
 | `owner.name` | Your name as Google Chat shows it. Used to find `@Your Name` | required |
 | `owner.email` | Your address. Only replies from it can close an item | required |
-| `internalDomain` | Your company's mail domain. Mail from it, sent to you, is a colleague | the domain of `owner.email` |
+| `internalDomain` | Your company's mail domain. Mail from it, sent to you, is a colleague. Set it if `owner.email` is a public webmail address such as gmail.com | the domain of `owner.email`, unless that is public webmail (then nobody is a colleague by domain) |
 | `ceo` | `name` and `email` of the one person who is always Top most | nobody is Top most |
 | `uptimeSenders` | Addresses that send site-down alerts | none |
 | `reportSenders` | Addresses that send automated reports | none |
@@ -206,8 +213,9 @@ the UAEL posts grid). Another theme will need a new entry in `LAYOUTS` in `src/s
 
 ### 3. Getting mail in
 
-Be clear about this part: **the Node code does not read Gmail.** It reads three JSON
-files in `state/`.
+Be clear about this part: **the Node code does not read Gmail.** It reads JSON files in
+`state/`: `inbox.json`, `sent.json` and `verdicts.json`, plus `readState.json` (the
+read/unread labels of the threads behind open items) when the agent writes it.
 
 In my setup an AI agent writes those files. It is Claude with a Gmail connector, run as a
 scheduled task every 2 hours. It follows the prompt in
@@ -224,7 +232,8 @@ You do not have to use an agent. Anything that can write `state/inbox.json` in t
 shown in [`examples/README.md`](examples/README.md) will do: a Gmail API script, an IMAP
 script, an export. Without an agent you also write `verdicts.json` yourself, or leave it
 as `{}`. Then the messages the rules cannot place are reported as "could not be judged"
-and stay out of the alerts.
+and stay out of the alerts. Without `readState.json`, items close only on your reply or
+by hand.
 
 Each run is two commands:
 
@@ -265,10 +274,17 @@ on its own.
 An item stays open until someone closes it. Open items get a reminder after 2 hours and
 after 6 hours. After that they appear in each daily digest.
 
-- **Email items close themselves.** When your reply shows up in `sent.json`, and it is
-  newer than the question, the item closes.
-- **Chat items do not.** A webhook can only send, so the Watcher cannot see your Chat
-  reply. Close these by hand.
+- **Opening it in Gmail closes it.** Each run, `triage` lists the Gmail threads behind
+  the open items in `openThreads.json`. The agent reads their labels (a metadata-only read
+  that marks nothing) into `readState.json`. Once every message in every thread behind an
+  item has lost its `UNREAD` label, the item closes. This covers Chat items too, through
+  their notification emails. Anything missing or oddly shaped counts as unread. Mark a
+  message unread again to keep its item open. Mail you had already read before the Watcher
+  first saw it is not alerted.
+- **Email items also close on your reply.** When your reply shows up in `sent.json`, and
+  it is newer than the question, the item closes.
+- **A Chat item with no notification email behind it does not close by itself.** A
+  webhook can only send, so the Watcher cannot see your Chat reply. Close these by hand.
 
 ```bash
 node src/close.mjs --list     # what is open, with the key for each
@@ -325,7 +341,7 @@ audit.
 npm test
 ```
 
-303 tests, 0 dependencies, no network. Every test runs against the committed example
+323 tests, 0 dependencies, no network. Every test runs against the committed example
 config and the invented fixtures in `fixtures/`. Your own `watcher.config.json` is never
 read by the tests.
 
@@ -338,6 +354,7 @@ read by the tests.
 | `test/sites.test.mjs` | the blog freshness check |
 | `test/ledger.test.mjs`, `test/chat.test.mjs`, `test/config.test.mjs` | open items, posting, the `.env` reader |
 | `test/settings.test.mjs` | the config loader, dry run, and that every setting reaches the code |
+| `test/read.test.mjs` | closing items when you have read them in Gmail: `openThreads.json`, `readState.json` |
 
 The same tests run on GitHub on every change, on Node 22 and 24.
 
@@ -369,6 +386,7 @@ The same tests run on GitHub on every change, on Node 22 and 24.
 ## Layout
 
 ```
+SETUP.md            step-by-step setup, from download to the first alert
 src/settings.mjs    loads and checks watcher.config.json
 src/config.mjs      reads CHAT_WEBHOOK_URL from .env
 src/triage.mjs      step 1: sort the inbox

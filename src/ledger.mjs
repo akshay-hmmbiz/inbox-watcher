@@ -18,7 +18,10 @@ const sleepSync = (ms) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)),
 // unchanged: the original openedAt is what the nag schedule runs from, and the
 // original waitingFor is kept with it. waitingFor is optional, and is stored only
 // when it is a non-empty string, so an item opened without one has the same shape as before.
-export function openItem(ledger, { key, person, summary, link, openedAt, waitingFor, importance }) {
+// threads and messages are optional too: the Gmail thread ids and message ids the item came
+// from, kept so it can close once the owner has read them all. Each is stored only when it
+// holds at least one non-empty string.
+export function openItem(ledger, { key, person, summary, link, openedAt, waitingFor, importance, threads, messages }) {
   const next = copy(ledger);
   if (next.items[key]) return next;
   next.items[key] = {
@@ -33,7 +36,36 @@ export function openItem(ledger, { key, person, summary, link, openedAt, waiting
   if (typeof waitingFor === 'string' && waitingFor.trim() !== '') next.items[key].waitingFor = waitingFor;
   // Optional too, and only one of the four known words is ever stored.
   if (['top', 'high', 'medium', 'low'].includes(importance)) next.items[key].importance = importance;
+  // The Gmail threads the item came from, so it can close once the owner has read them all.
+  const own = cleanIds(threads);
+  if (own.length) next.items[key].threads = own;
+  // And the Gmail message ids behind it: each must be seen read before reading closes it.
+  const ids = cleanIds(messages);
+  if (ids.length) next.items[key].messages = ids;
   return next;
+}
+
+const cleanIds = (list) => (Array.isArray(list)
+  ? [...new Set(list.filter((t) => typeof t === 'string' && t.trim() !== '').map((t) => t.trim()))]
+  : []);
+
+// Every Gmail thread an open item is tracked by, deduplicated: the threads stored on it, the
+// thread in a `thread:` key, and the thread in its Gmail link. An item opened before threads
+// were stored has only the link. Gmail's web links carry the thread as a decimal `thread-f:`
+// number, which is the API's hex thread id; the Watcher's own fallback link carries the hex id
+// directly. An item with none of these has no threads and can never close by reading.
+export function threadsOf(item) {
+  const out = cleanIds(item?.threads);
+  const key = String(item?.key ?? '');
+  if (key.startsWith('thread:') && key.length > 'thread:'.length) out.push(key.slice('thread:'.length));
+  const link = String(item?.link ?? '');
+  const f = /[#/]all\/thread-f:(\d{1,20})/.exec(link);
+  if (f) out.push(BigInt(f[1]).toString(16));
+  else {
+    const hex = /\/mail\/u\/\d+\/#all\/([0-9a-f]{6,32})$/i.exec(link);
+    if (hex) out.push(hex[1].toLowerCase());
+  }
+  return [...new Set(out)];
 }
 
 export function closeItem(ledger, key) {
@@ -86,6 +118,12 @@ function checkLedgerShape(value, file) {
     if (!Array.isArray(item.nagged)) fail(`item "${key}" has no "nagged" array`);
     if (item.waitingFor !== undefined && typeof item.waitingFor !== 'string') {
       fail(`item "${key}" has a "waitingFor" that is not a string`);
+    }
+    for (const field of ['threads', 'messages']) {
+      const v = item[field];
+      if (v !== undefined && (!Array.isArray(v) || v.some((t) => typeof t !== 'string'))) {
+        fail(`item "${key}" has a "${field}" that is not a list of strings`);
+      }
     }
   }
   return value;

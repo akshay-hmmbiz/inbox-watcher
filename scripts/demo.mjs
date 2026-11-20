@@ -79,7 +79,7 @@ try {
   say('  $ node src/close.mjs --list');
   for (const line of listItems(stateDir, SECOND_RUN)) say(`  ${line.replace(/\n/g, '\n  ')}`);
 
-  say('\nDone. To use it for real, see "Real setup" in README.md.');
+  say('\nDone. To use it for real, follow SETUP.md (about 10 minutes).');
 } catch (err) {
   failed = true;
   console.error(`demo failed: ${err.message}`);

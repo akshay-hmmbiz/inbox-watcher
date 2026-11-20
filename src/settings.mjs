@@ -27,6 +27,12 @@ export const DEFAULTS = Object.freeze({
 });
 
 const ADDRESS = /^[^\s@<>]+@[^\s@<>]+\.[^\s@<>]+$/;
+// Domains anyone can sign up to. Sharing one with the owner says nothing about being a colleague.
+const PUBLIC_WEBMAIL = new Set([
+  '@gmail.com', '@googlemail.com', '@outlook.com', '@hotmail.com', '@live.com', '@msn.com',
+  '@yahoo.com', '@ymail.com', '@icloud.com', '@me.com', '@aol.com', '@proton.me', '@protonmail.com',
+  '@zoho.com', '@gmx.com', '@yandex.com', '@rediffmail.com',
+]);
 const HOST = /^[a-z0-9.-]+$/;
 const SITE_KINDS = ['feed', 'listing'];
 const LISTING_LAYOUTS = ['loop grid', 'UAEL grid'];
@@ -63,7 +69,11 @@ export function validateSettings(raw) {
   }
 
   // --- internal domain (optional: the owner's own domain) ---
-  let internalDomain = owner.email ? owner.email.slice(owner.email.indexOf('@')) : '';
+  // Never defaulted from public webmail: an owner at gmail.com would otherwise make every
+  // stranger at gmail.com a colleague, and their mail would be alerted as someone waiting.
+  // null means "no colleagues by domain"; classify checks for it.
+  const ownDomain = owner.email ? owner.email.slice(owner.email.indexOf('@')) : '';
+  let internalDomain = ownDomain && !PUBLIC_WEBMAIL.has(ownDomain) ? ownDomain : null;
   if (raw.internalDomain !== undefined) {
     if (!isText(raw.internalDomain) || /\s/.test(raw.internalDomain.trim())) bad('"internalDomain" must be a domain such as "your-company.com"');
     else internalDomain = `@${lower(raw.internalDomain).replace(/^@/, '')}`;
